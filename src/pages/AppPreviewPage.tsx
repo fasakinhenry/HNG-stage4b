@@ -19,6 +19,20 @@ function formatMessageTime(value: string) {
   });
 }
 
+function sortMessagesByDate(items: ConversationMessage[]) {
+  return [...items].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+}
+
+function mergeMessages(current: ConversationMessage[], next: ConversationMessage[]) {
+  const merged = new Map<string, ConversationMessage>();
+
+  for (const item of [...current, ...next]) {
+    merged.set(item.id, item);
+  }
+
+  return sortMessagesByDate(Array.from(merged.values()));
+}
+
 export function AppPreviewPage() {
   const { user, session } = useAuth();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -35,6 +49,33 @@ export function AppPreviewPage() {
     () => conversations.find((conversation) => conversation.userId === activeConversationId) ?? null,
     [activeConversationId, conversations]
   );
+
+  function startConversationFromSearch(result: UserSearchResult) {
+    setConversations((current) => {
+      const existing = current.find((conversation) => conversation.userId === result.id);
+
+      if (existing) {
+        return current;
+      }
+
+      return [
+        {
+          userId: result.id,
+          displayName: result.displayName,
+          username: result.username,
+          lastMessageAt: new Date().toISOString(),
+          lastMessagePreview: 'New secure conversation started.',
+          unreadCount: 0,
+          isOnline: false
+        },
+        ...current
+      ];
+    });
+
+    setActiveConversationId(result.id);
+    setMessages([]);
+    setQuery('');
+  }
 
   useEffect(() => {
     if (!session) {
@@ -58,7 +99,7 @@ export function AppPreviewPage() {
 
     setIsLoadingMessages(true);
     fetchConversationMessages(session.accessToken, activeConversationId)
-      .then((items) => setMessages(items))
+      .then((items) => setMessages(sortMessagesByDate(items)))
       .finally(() => setIsLoadingMessages(false));
   }, [activeConversationId, session]);
 
@@ -93,17 +134,28 @@ export function AppPreviewPage() {
           };
 
       const sentMessage = await sendEncryptedMessage(session.accessToken, activeConversation.userId, payload, draft.trim());
-      setMessages((current) => [...current, { ...sentMessage, plaintext: draft.trim() }]);
+      const optimisticMessage = { ...sentMessage, plaintext: draft.trim() };
+      const refreshedMessages = await fetchConversationMessages(session.accessToken, activeConversation.userId);
+
+      setMessages((current) => {
+        if (sentMessage.id.startsWith('demo-')) {
+          return mergeMessages(current, [optimisticMessage]);
+        }
+
+        return mergeMessages(current, [...refreshedMessages, optimisticMessage]);
+      });
       setConversations((current) =>
-        current.map((conversation) =>
-          conversation.userId === activeConversation.userId
-            ? {
-                ...conversation,
-                lastMessagePreview: draft.trim(),
-                lastMessageAt: new Date().toISOString()
-              }
-            : conversation
-        )
+        current
+          .map((conversation) =>
+            conversation.userId === activeConversation.userId
+              ? {
+                  ...conversation,
+                  lastMessagePreview: draft.trim(),
+                  lastMessageAt: new Date().toISOString()
+                }
+              : conversation
+          )
+          .sort((left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime())
       );
       setDraft('');
     } finally {
@@ -141,10 +193,7 @@ export function AppPreviewPage() {
                     key={result.id}
                     type="button"
                     className="card rounded-2xl px-4 py-3 text-left text-sm text-[var(--text)] transition hover:bg-[var(--surface)]"
-                    onClick={() => {
-                      setActiveConversationId(result.id);
-                      setQuery('');
-                    }}
+                    onClick={() => startConversationFromSearch(result)}
                   >
                     <div className="font-semibold">{result.displayName}</div>
                     <div className="text-xs text-[var(--text-secondary)]">@{result.username}</div>
