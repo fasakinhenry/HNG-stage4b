@@ -1,10 +1,12 @@
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { fetchSession, signIn, signOut, signUp } from '../services/authService';
+import { unwrapPrivateKeyWithPassword } from '../services/cryptoService';
 import type { AuthCredentials, AuthRegistrationPayload, AuthSession, UserProfile } from '../types/auth';
 
 interface AuthContextValue {
   user: UserProfile | null;
   session: AuthSession | null;
+  privateKey: CryptoKey | null;
   isAuthenticated: boolean;
   isBootstrapping: boolean;
   isWorking: boolean;
@@ -48,6 +50,7 @@ function persistSession(session: AuthSession | null) {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
 
@@ -74,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         setSession(null);
+        setPrivateKey(null);
         persistSession(null);
       })
       .finally(() => {
@@ -102,24 +106,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user: session?.user ?? null,
       session,
+      privateKey,
       isAuthenticated: Boolean(session),
       isBootstrapping,
       isWorking,
       signInUser: async (credentials) => {
-        await handleSubmit(() => signIn(credentials));
+        await handleSubmit(async () => {
+          const nextSession = await signIn(credentials);
+          const unwrappedPrivateKey = await unwrapPrivateKeyWithPassword(
+            nextSession.user.wrapped_private_key,
+            credentials.password,
+            nextSession.user.pbkdf2_salt
+          );
+          setPrivateKey(unwrappedPrivateKey);
+          return nextSession;
+        });
       },
       signUpUser: async (payload) => {
-        await handleSubmit(() => signUp(payload));
+        await handleSubmit(async () => {
+          const nextSession = await signUp(payload);
+          const unwrappedPrivateKey = await unwrapPrivateKeyWithPassword(
+            nextSession.user.wrapped_private_key,
+            payload.password,
+            nextSession.user.pbkdf2_salt
+          );
+          setPrivateKey(unwrappedPrivateKey);
+          return nextSession;
+        });
       },
       signOutUser: async () => {
         if (session) {
           await signOut(session.refreshToken, session.accessToken);
         }
         setSession(null);
+        setPrivateKey(null);
         persistSession(null);
       }
     }),
-    [isBootstrapping, isWorking, session]
+    [isBootstrapping, isWorking, privateKey, session]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

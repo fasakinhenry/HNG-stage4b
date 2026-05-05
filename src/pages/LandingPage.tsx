@@ -71,7 +71,7 @@ export function LandingPage() {
                 Get started
               </Button>
               <Button variant="secondary" size="lg" onClick={() => window.location.assign('/app')}>
-                Open demo app
+                Open secure inbox
               </Button>
             </div>
 
@@ -91,7 +91,7 @@ export function LandingPage() {
               <div className="rounded-[28px] bg-[linear-gradient(135deg,rgba(0,132,208,0.14),rgba(102,184,232,0.10))] p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-secondary)]">WhisperBox demo</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-secondary)]">WhisperBox secure</p>
                     <h2 className="mt-1 text-2xl font-bold text-[var(--text)]">Encrypted inbox</h2>
                   </div>
                   <Badge className="bg-[var(--surface)] text-[var(--accent)]">Live preview</Badge>
@@ -179,9 +179,9 @@ export function LandingPage() {
           <Card className="rounded-[30px] bg-[linear-gradient(135deg,rgba(0,132,208,0.12),rgba(102,184,232,0.08))] p-6 sm:p-8">
             <div className="space-y-4">
               <Badge className="bg-[var(--surface)] text-[var(--accent)]">Ready to use</Badge>
-              <h3 className="text-2xl font-bold text-[var(--text)]">Open the demo app and start exploring the experience.</h3>
+              <h3 className="text-2xl font-bold text-[var(--text)]">Open the encrypted app and start messaging.</h3>
               <p className="text-sm leading-7 text-[var(--text-secondary)]">
-                You can move into the authenticated app shell, search conversations, and send demo encrypted messages while the full crypto flow lands in the next stage.
+                Move into the authenticated app shell, search users, and exchange API-backed encrypted messages in real time.
               </p>
               <Button size="lg" onClick={() => window.location.assign('/app')}>
                 Launch app preview

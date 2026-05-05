@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clock3, Search, ShieldCheck, Sparkles } from 'lucide-react';
 import { AppFrame } from '../components/layouts/AppFrame';
 import { Badge } from '../components/ui/Badge';
@@ -8,8 +8,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { ChatMessage } from '../components/messaging/ChatMessage';
 import { ConversationItem } from '../components/messaging/ConversationItem';
 import { MessageComposer } from '../components/messaging/MessageComposer';
-import { createEncryptedPayload } from '../services/cryptoService';
+import { createEncryptedPayload, decryptPayload } from '../services/cryptoService';
 import { fetchConversationMessages, fetchConversations, fetchUserPublicKey, searchUsers, sendEncryptedMessage } from '../services/messageService';
+import { websocketManager } from '../services/websocketService';
 import type { ConversationMessage, ConversationSummary, UserSearchResult } from '../types/messaging';
 
 function formatMessageTime(value: string) {
@@ -33,8 +34,22 @@ function mergeMessages(current: ConversationMessage[], next: ConversationMessage
   return sortMessagesByDate(Array.from(merged.values()));
 }
 
+async function decryptConversationMessage(message: ConversationMessage, viewerUserId: string | undefined, privateKey: CryptoKey | null) {
+  if (!privateKey) {
+    return message;
+  }
+
+  try {
+    const preferSelfKey = message.fromUserId === viewerUserId;
+    const plaintext = await decryptPayload(message.payload, privateKey, preferSelfKey);
+    return { ...message, plaintext };
+  } catch {
+    return { ...message, plaintext: 'Unable to decrypt this message.' };
+  }
+}
+
 export function AppPreviewPage() {
-  const { user, session } = useAuth();
+  const { user, session, privateKey } = useAuth();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -44,11 +59,29 @@ export function AppPreviewPage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [chatError, setChatError] = useState('');
+  const [realtimeNotice, setRealtimeNotice] = useState('');
+  const activeConversationIdRef = useRef(activeConversationId);
+  const userIdRef = useRef(user?.id);
+  const privateKeyRef = useRef(privateKey);
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.userId === activeConversationId) ?? null,
     [activeConversationId, conversations]
   );
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    userIdRef.current = user?.id;
+  }, [user?.id]);
+
+  useEffect(() => {
+    privateKeyRef.current = privateKey;
+  }, [privateKey]);
 
   function startConversationFromSearch(result: UserSearchResult) {
     setConversations((current) => {
@@ -64,7 +97,7 @@ export function AppPreviewPage() {
           displayName: result.displayName,
           username: result.username,
           lastMessageAt: new Date().toISOString(),
-          lastMessagePreview: 'New secure conversation started.',
+          lastMessagePreview: 'Encrypted conversation started.',
           unreadCount: 0,
           isOnline: false
         },
@@ -83,12 +116,73 @@ export function AppPreviewPage() {
     }
 
     setIsLoadingConversations(true);
+    setChatError('');
     fetchConversations(session.accessToken)
       .then((items) => {
         setConversations(items);
         setActiveConversationId((current) => current || items[0]?.userId || '');
       })
+      .catch((error) => {
+        setConversations([]);
+        setChatError(error instanceof Error ? error.message : 'Failed to load conversations.');
+      })
       .finally(() => setIsLoadingConversations(false));
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      websocketManager.disconnect();
+      setWsConnected(false);
+      return;
+    }
+
+    websocketManager
+      .connect(session.accessToken, {
+        onMessage: (message) => {
+          decryptConversationMessage(message, userIdRef.current, privateKeyRef.current).then((decryptedMessage) => {
+            if (decryptedMessage.fromUserId === activeConversationIdRef.current || decryptedMessage.toUserId === activeConversationIdRef.current) {
+              setMessages((current) => {
+                if (current.some((currentMessage) => currentMessage.id === decryptedMessage.id)) {
+                  return current;
+                }
+                return mergeMessages(current, [decryptedMessage]);
+              });
+            }
+
+            setConversations((current) =>
+              current
+                .map((conversation) => {
+                  if (conversation.userId === decryptedMessage.fromUserId || conversation.userId === decryptedMessage.toUserId) {
+                    return {
+                      ...conversation,
+                      lastMessageAt: decryptedMessage.createdAt,
+                      lastMessagePreview: 'Encrypted message'
+                    };
+                  }
+                  return conversation;
+                })
+                .sort((left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime())
+            );
+          });
+        },
+        onConnected: () => {
+          setWsConnected(true);
+          setRealtimeNotice('');
+        },
+        onDisconnected: () => setWsConnected(false),
+        onError: (error) => {
+          setWsConnected(false);
+          setRealtimeNotice(error);
+        }
+      })
+      .catch((error) => {
+        setWsConnected(false);
+        setRealtimeNotice(error instanceof Error ? error.message : 'Realtime unavailable. Using REST fallback.');
+      });
+
+    return () => {
+      websocketManager.disconnect();
+    };
   }, [session]);
 
   useEffect(() => {
@@ -98,10 +192,18 @@ export function AppPreviewPage() {
     }
 
     setIsLoadingMessages(true);
+    setChatError('');
     fetchConversationMessages(session.accessToken, activeConversationId)
-      .then((items) => setMessages(sortMessagesByDate(items)))
+      .then(async (items) => {
+        const decryptedItems = await Promise.all(items.map((item) => decryptConversationMessage(item, user?.id, privateKey)));
+        setMessages(sortMessagesByDate(decryptedItems));
+      })
+      .catch((error) => {
+        setMessages([]);
+        setChatError(error instanceof Error ? error.message : 'Failed to load conversation history.');
+      })
       .finally(() => setIsLoadingMessages(false));
-  }, [activeConversationId, session]);
+  }, [activeConversationId, privateKey, session, user?.id]);
 
   useEffect(() => {
     if (!session || !query.trim()) {
@@ -110,7 +212,12 @@ export function AppPreviewPage() {
     }
 
     const timer = window.setTimeout(() => {
-      searchUsers(session.accessToken, query).then(setSearchResults);
+      searchUsers(session.accessToken, query)
+        .then(setSearchResults)
+        .catch((error) => {
+          setSearchResults([]);
+          setChatError(error instanceof Error ? error.message : 'User search failed.');
+        });
     }, 180);
 
     return () => window.clearTimeout(timer);
@@ -121,36 +228,38 @@ export function AppPreviewPage() {
       return;
     }
 
+    const plaintext = draft.trim();
     setIsSending(true);
+    setChatError('');
+
     try {
       const recipientPublicKey = await fetchUserPublicKey(session.accessToken, activeConversation.userId);
-      const payload = recipientPublicKey
-        ? await createEncryptedPayload(draft.trim(), recipientPublicKey, user.public_key)
-        : {
-            ciphertext: btoa(draft.trim()),
-            iv: 'ZGVtbw==',
-            encryptedKey: 'ZGVtbw==',
-            encryptedKeyForSelf: 'ZGVtbw=='
-          };
+      const payload = await createEncryptedPayload(plaintext, recipientPublicKey, user.public_key);
 
-      const sentMessage = await sendEncryptedMessage(session.accessToken, activeConversation.userId, payload, draft.trim());
-      const optimisticMessage = { ...sentMessage, plaintext: draft.trim() };
-      const refreshedMessages = await fetchConversationMessages(session.accessToken, activeConversation.userId);
+      const optimisticMessage: ConversationMessage = {
+        id: `pending-${Date.now()}`,
+        fromUserId: user.id,
+        toUserId: activeConversation.userId,
+        payload,
+        delivered: false,
+        createdAt: new Date().toISOString(),
+        plaintext
+      };
+      setMessages((current) => mergeMessages(current, [optimisticMessage]));
 
-      setMessages((current) => {
-        if (sentMessage.id.startsWith('demo-')) {
-          return mergeMessages(current, [optimisticMessage]);
-        }
+      if (wsConnected && websocketManager.isConnected()) {
+        websocketManager.sendMessage(activeConversation.userId, payload);
+      } else {
+        await sendEncryptedMessage(session.accessToken, activeConversation.userId, payload);
+      }
 
-        return mergeMessages(current, [...refreshedMessages, optimisticMessage]);
-      });
       setConversations((current) =>
         current
           .map((conversation) =>
             conversation.userId === activeConversation.userId
               ? {
                   ...conversation,
-                  lastMessagePreview: draft.trim(),
+                  lastMessagePreview: 'Encrypted message',
                   lastMessageAt: new Date().toISOString()
                 }
               : conversation
@@ -158,6 +267,8 @@ export function AppPreviewPage() {
           .sort((left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime())
       );
       setDraft('');
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'Message send failed.');
     } finally {
       setIsSending(false);
     }
@@ -234,9 +345,9 @@ export function AppPreviewPage() {
                 Only intended recipients can decrypt the content. The server only receives encrypted blobs.
               </p>
             </div>
-            <Badge className="bg-[var(--surface-alt)] text-[var(--text-secondary)]">
+            <Badge className={`${wsConnected ? 'bg-green-500/20 text-green-600' : 'bg-amber-500/15 text-amber-700'}`}>
               <Clock3 className="h-3.5 w-3.5" />
-              Session fresh
+              {wsConnected ? 'Real-time' : 'REST mode'}
             </Badge>
           </div>
 
@@ -258,6 +369,16 @@ export function AppPreviewPage() {
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-[28px] bg-[var(--surface-alt)] p-4">
+              {chatError ? (
+                <div className="rounded-2xl border border-[var(--danger)]/20 bg-[color-mix(in_srgb,var(--danger)_12%,transparent)] px-4 py-3 text-sm text-[var(--danger)]">
+                  {chatError}
+                </div>
+              ) : null}
+              {realtimeNotice ? (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700">
+                  {realtimeNotice}
+                </div>
+              ) : null}
               {isLoadingMessages ? (
                 <div className="rounded-2xl bg-[var(--surface)] px-4 py-6 text-sm text-[var(--text-secondary)]">Loading messages...</div>
               ) : messages.length ? (
@@ -266,7 +387,7 @@ export function AppPreviewPage() {
                     key={message.id}
                     text={message.plaintext ?? 'Encrypted message awaiting decryption.'}
                     timeLabel={formatMessageTime(message.createdAt)}
-                    incoming={message.fromUserId !== user?.id && message.fromUserId !== 'demo-self'}
+                    incoming={message.fromUserId !== user?.id}
                     delivered={message.delivered}
                   />
                 ))
