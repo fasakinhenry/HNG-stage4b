@@ -1,35 +1,66 @@
-import type { InputHTMLAttributes, ReactNode } from 'react';
-import { cn } from '../../lib/cn';
+import { type InputHTMLAttributes, type ReactNode, forwardRef, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
+import { clsx } from 'clsx';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
-  label: string;
-  helperText?: string;
+  label?: string;
   error?: string;
-  leadingIcon?: ReactNode;
+  hint?: string;
+  leftIcon?: ReactNode;
+  rightIcon?: ReactNode;
+  showPasswordToggle?: boolean;
 }
 
-export function Input({ label, helperText, error, leadingIcon, className, id, ...props }: InputProps) {
-  const generatedId = id ?? label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+export const Input = forwardRef<HTMLInputElement, InputProps>((
+  { label, error, hint, leftIcon, rightIcon, showPasswordToggle, className, type, id, ...rest },
+  ref
+) => {
+  const [showPass, setShowPass] = useState(false);
+  const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
+  const resolvedType = showPasswordToggle ? (showPass ? 'text' : 'password') : type;
 
   return (
-    <label htmlFor={generatedId} className="grid gap-2 text-sm">
-      <span className="font-medium text-[var(--muted-strong)]">{label}</span>
-      <span
-        className={cn(
-          'card flex items-center gap-3 rounded-lg px-4 py-3 transition-all duration-200',
-          error ? 'border-[var(--danger)] bg-red-50 dark:bg-red-950/20' : '',
-          className
+    <div className="flex flex-col gap-1.5">
+      {label && (
+        <label
+          htmlFor={inputId}
+          style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.01em', textTransform: 'uppercase', fontFamily: 'var(--font-sans)' }}
+        >
+          {label}
+        </label>
+      )}
+      <div className="relative">
+        {leftIcon && (
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-3)' }}>
+            {leftIcon}
+          </span>
         )}
-      >
-        {leadingIcon ? <span className="text-[var(--muted)]">{leadingIcon}</span> : null}
         <input
-          id={generatedId}
-          className="focus-ring w-full bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-          {...props}
+          ref={ref}
+          id={inputId}
+          type={resolvedType}
+          className={clsx('input-nb', leftIcon && 'pl-10', (rightIcon || showPasswordToggle) && 'pr-10', error && 'error', className)}
+          {...rest}
         />
-      </span>
-      {error ? <span className="text-xs text-[var(--danger)]">{error}</span> : null}
-      {!error && helperText ? <span className="text-xs text-[var(--muted)]">{helperText}</span> : null}
-    </label>
+        {showPasswordToggle ? (
+          <button
+            type="button"
+            onClick={() => setShowPass(p => !p)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded transition-colors"
+            style={{ color: 'var(--text-3)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            tabIndex={-1}
+          >
+            {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        ) : rightIcon ? (
+          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-3)' }}>
+            {rightIcon}
+          </span>
+        ) : null}
+      </div>
+      {error && <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--danger)' }}>{error}</p>}
+      {hint && !error && <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)' }}>{hint}</p>}
+    </div>
   );
-}
+});
+Input.displayName = 'Input';

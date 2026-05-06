@@ -1,54 +1,49 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
-import { cn } from '../../lib/cn';
+import { type ButtonHTMLAttributes, type ReactNode, forwardRef } from 'react';
+import { Loader2 } from 'lucide-react';
+import { clsx } from 'clsx';
+
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'accent' | 'icon' | 'icon-brand';
+type Size    = 'sm' | 'md' | 'lg' | 'xl';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost' | 'soft';
-  size?: 'sm' | 'md' | 'lg';
+  variant?: Variant;
+  size?: Size;
   loading?: boolean;
-  leadingIcon?: ReactNode;
-  trailingIcon?: ReactNode;
+  fullWidth?: boolean;
+  leftIcon?: ReactNode;
+  rightIcon?: ReactNode;
+  children?: ReactNode;
 }
 
-const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
-  primary:
-    'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shadow-sm',
-  secondary:
-    'bg-[var(--surface-alt)] text-[var(--text)] border border-[var(--border)] hover:bg-[var(--surface)]',
-  ghost: 'bg-transparent text-[var(--text)] hover:bg-[var(--surface-alt)] border border-transparent',
-  soft: 'bg-blue-100 text-[var(--accent)] border border-transparent hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800 dark:text-blue-200'
-};
-
-const sizeClasses: Record<NonNullable<ButtonProps['size']>, string> = {
-  sm: 'h-10 px-4 text-sm',
-  md: 'h-11 px-5 text-sm',
-  lg: 'h-12 px-6 text-base'
-};
-
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  loading = false,
-  leadingIcon,
-  trailingIcon,
-  className,
-  children,
-  disabled,
-  ...props
-}: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>((
+  { variant = 'primary', size = 'md', loading = false, fullWidth = false,
+    leftIcon, rightIcon, children, className, disabled, ...rest },
+  ref
+) => {
+  const variantCls: Record<Variant, string> = {
+    primary:    'btn btn-primary',
+    secondary:  'btn btn-secondary',
+    ghost:      'btn btn-ghost',
+    danger:     'btn btn-danger',
+    accent:     'btn btn-accent',
+    icon:       'btn btn-icon',
+    'icon-brand': 'btn btn-icon-brand',
+  };
+  const sizeCls: Record<Size, string> = {
+    sm: 'btn-sm', md: '', lg: 'btn-lg', xl: 'btn-xl',
+  };
   return (
     <button
-      className={cn(
-        'focus-ring cursor-pointer inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-all duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50',
-        variantClasses[variant],
-        sizeClasses[size],
-        className
-      )}
+      ref={ref}
       disabled={disabled || loading}
-      {...props}
+      className={clsx(variantCls[variant], sizeCls[size], fullWidth && 'btn-full', className)}
+      {...rest}
     >
-      {loading ? <span className="pulse-dot" /> : leadingIcon}
-      <span>{children}</span>
-      {!loading && trailingIcon}
+      {loading ? <Loader2 size={16} className="animate-spin" style={{ animation: 'spin 0.8s linear infinite' }} />
+       : leftIcon ? <span className="flex-shrink-0">{leftIcon}</span> : null}
+      {children && <span>{children}</span>}
+      {!loading && rightIcon && <span className="flex-shrink-0">{rightIcon}</span>}
     </button>
   );
-}
+});
+Button.displayName = 'Button';

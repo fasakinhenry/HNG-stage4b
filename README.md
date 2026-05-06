@@ -1,41 +1,57 @@
-# WhisperBox Stage 4B
+# WhisperBox 🔐
 
-WhisperBox is a branded, light/dark-ready frontend shell for an end-to-end encrypted messaging product. This first stage focuses on the public landing page, secure auth entry points, and a polished app preview so the project already feels like a real product.
+> End-to-end encrypted messaging app. The server stores only ciphertext — only you can read your messages.
 
-## Stack
+## Tech Stack
+- React 19 + Vite 8 + TypeScript 6
+- Tailwind CSS v4 (Neumorphic design system, light/dark mode)
+- Framer Motion, React Router v7
+- **Crypto**: Web Crypto API — no third-party crypto libs
 
-- React 19
-- Vite
-- TypeScript
-- Tailwind CSS v4
-- React Router
-- Context-based auth and theme state
-- Bun for local development and dependency management
+## Quick Start
+```bash
+npm install
+cp .env.example .env
+npm run dev
+```
 
-## What’s Included
+## Folder Structure
+```
+src/
+├── components/ui/       # Button, Input, Avatar, Logo, Toast, ThemeToggle
+├── components/chat/     # ChatWindow
+├── context/             # AuthContext, ThemeContext
+├── layouts/             # AuthLayout, ChatLayout
+├── lib/                 # api.ts, crypto.ts
+├── pages/               # LandingPage, LoginPage, RegisterPage
+└── types/               # Shared TS types
+```
 
-- Landing page with product branding, trust cues, and messaging-style visuals
-- Auth page with sign-in and sign-up tabs, loading states, validation, and demo fallback behavior
-- Product preview shell that resembles a real conversation workspace
-- Light and dark mode with custom glassmorphism-inspired surfaces
-- API-ready auth service pointed at the WhisperBox backend
+## Encryption Flow
 
-## Setup
+**Registration**: RSA-OAEP 2048-bit keypair → private key wrapped with PBKDF2-derived AES-KW → sent to server as ciphertext only.
 
-1. Install dependencies with `bun install`.
-2. Copy `env.example` to `.env` and set `VITE_API_BASE_URL` if you want to point at the live backend.
-3. Run the app with `bun run dev`.
-4. Build for production with `bun run build`.
+**Login**: Re-derive wrapping key from password → unwrap private key into non-extractable in-memory CryptoKey.
 
-## Environment
+**Send**: Generate ephemeral AES-GCM key per message → encrypt plaintext → RSA-encrypt the AES key for recipient (and for self) → server stores opaque payload.
 
-Use `env.example` as the template for local configuration:
+**Receive**: RSA-decrypt AES key with private key → AES-GCM decrypt ciphertext → render plaintext.
 
-- `VITE_API_BASE_URL=https://whisperbox.koyeb.app`
+## Key Management
+| Key | Storage | Extractable |
+|-----|---------|-------------|
+| RSA Public Key | Server DB | Yes |
+| RSA Private Key (wrapped) | Server DB (AES-KW ciphertext) | N/A |
+| RSA Private Key (live) | JS heap CryptoKey only | **No** |
+| Per-message AES key | Never stored | Ephemeral only |
 
-## Notes
+## Security Notes
+- 250,000 PBKDF2 iterations (SHA-256) for key derivation
+- Non-extractable CryptoKey prevents XSS exfiltration
+- encryptedKeyForSelf enables sender to read own messages
+- Known limits: no forward secrecy, no key rotation, single-device
 
-- Session data is kept in `sessionStorage` rather than `localStorage`.
-- Theme preference is stored locally and is safe to persist.
-- The UI is intentionally designed to feel calm, secure, and modern in both themes.
-- Later stages can plug in the encryption flow, conversation list, and live messaging without reworking the layout foundation.
+## Env
+```
+VITE_API_BASE_URL=https://whisperbox.koyeb.app
+```
